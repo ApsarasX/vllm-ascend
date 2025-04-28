@@ -61,6 +61,7 @@ class NPUWorker(WorkerBase):
             is_driver_worker: bool = False,
             # Additional parameters for compatibility with vllm
             **kwargs):
+        torch.npu.memory._record_memory_history(stacks="python")
         """Initialize the worker for Ascend."""
         # register patch for vllm
         from vllm_ascend.utils import adapt_patch
@@ -206,6 +207,7 @@ class NPUWorker(WorkerBase):
     def initialize_from_config(self, kv_cache_config: KVCacheConfig) -> None:
         """Allocate NPU KV cache with the specified kv_cache_config."""
         self.model_runner.initialize_kv_cache(kv_cache_config)
+        torch.npu.memory._dump_snapshot(f"/root/vllm_v1_new2_rank{self.rank}.pickle")
 
     def initialize_cache(self, kv_cache_configs: List[KVCacheConfig]) -> None:
         """Allocate GPU KV cache with the specified kv_cache_config."""

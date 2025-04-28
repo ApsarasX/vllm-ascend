@@ -274,22 +274,21 @@ def fused_experts(hidden_states: torch.Tensor,
                               w2_scale,
                               expert_tokens,
                               group_list_type=group_list_type)
+    del sorted_hidden_states
 
     if expert_map is not None:
-        weighted_down_out = down_out_list * sorted_weights.unsqueeze(1)
+        down_out_list.mul_(sorted_weights.unsqueeze(1))
 
         final_hidden_states = torch.zeros(*original_shape,
-                                          device=hidden_states.device,
+                                          device=device,
                                           dtype=dtype)
 
         num_valid_tokens = mask.sum()
         valid_token_mask = torch.arange(
             0, sorted_token_indices.shape[0],
             device=device).unsqueeze(1) < num_valid_tokens
-        valid_output = torch.where(
-            valid_token_mask, weighted_down_out,
-            torch.zeros_like(weighted_down_out)).to(dtype)
-        final_hidden_states.index_add_(0, sorted_token_indices, valid_output)
+        down_out_list.mul_(valid_token_mask)
+        final_hidden_states.index_add_(0, sorted_token_indices, down_out_list)
     else:
         # TODO: Reorder device memory 2 times here, replace the current
         # implementation here when suitable operators become available.
