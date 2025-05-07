@@ -139,31 +139,42 @@ class NPUWorker(WorkerBase):
         # Profile the memory usage of the model and get the maximum number of
         # cache blocks that can be allocated with the remaining free memory.
         NPUPlatform.empty_cache()
+        torch.npu.reset_peak_memory_stats()
 
+        _, total_npu_memory = NPUPlatform.mem_get_info()
         # Execute a forward pass with dummy inputs to profile the memory usage
         # of the model.
         self.model_runner.profile_run()
 
-        # Calculate the number of blocks that can be allocated with the
-        # profiled peak memory.
-        free_npu_memory, total_npu_memory = NPUPlatform.mem_get_info()
+        free_npu_memory, _ = NPUPlatform.mem_get_info()
         # NOTE(woosuk): Here we assume that the other processes using the same
         # GPU did not change their memory usage during the profiling.
-        peak_memory = self.init_npu_memory - free_npu_memory
-        assert peak_memory > 0, (
+        assert self.init_npu_memory > free_npu_memory, (
             "Error in memory profiling. "
             f"Initial free memory {self.init_npu_memory}, current free memory"
-            f" {free_npu_memory}. This happens when the NPU memory was "
+            f" {free_npu_memory}. This happens when the GPU memory was "
             "not properly cleaned up before initializing the vLLM instance.")
 
-        gc.collect()
-        # TODO: don`t need impl this func after empty_cache in
-        # Worker.determine_num_available_blocks() unified`
+        # Get the peak memory allocation recorded by torch
+        peak_memory = torch.npu.memory_stats()["allocated_bytes.all.peak"]
+
+        # Check for any memory left around that may have been allocated on the
+        # gpu outside of `torch`. NCCL operations, for example, can use a few
+        # GB during a forward pass
         NPUPlatform.empty_cache()
-        usable_memory_size = total_npu_memory * self.cache_config.gpu_memory_utilization - peak_memory
-        npu_kv_cache_bytes = max(usable_memory_size, 0)
+        torch_allocated_bytes = torch.npu.memory_stats(
+        )["allocated_bytes.all.current"]
+        total_allocated_bytes = NPUPlatform.mem_get_info(
+        )[1] - NPUPlatform.mem_get_info()[0]
+        non_torch_allocations = total_allocated_bytes - torch_allocated_bytes
+        if non_torch_allocations > 0:
+            peak_memory += non_torch_allocations
+        available_kv_cache_memory = (
+            total_npu_memory * self.cache_config.gpu_memory_utilization -
+            peak_memory)
+        npu_kv_cache_bytes = max(available_kv_cache_memory, 0)
         logger.info(
-            f"Available memory: {usable_memory_size}, total memory: {total_npu_memory}"
+            f"Available memory: {npu_kv_cache_bytes}, total memory: {total_npu_memory}"
         )
         return int(npu_kv_cache_bytes)
 
