@@ -1124,7 +1124,7 @@ class NPUModelRunner(LoRAModelRunnerMixin):
         attn_state = self._build_attn_state(num_reqs, num_scheduled_tokens,
                                             num_valid_tokens)
         self.attn_mask = self._make_attention_mask(seq_lens=seq_lens_cpu,
-                                                   position=positions_cpu,
+                                                   position=positions,
                                                    attn_state=attn_state)
         self.attn_state = attn_state  # type: ignore
 
