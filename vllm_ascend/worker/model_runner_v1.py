@@ -1368,15 +1368,18 @@ class NPUModelRunner(LoRAModelRunnerMixin):
             # embeddings), we always use embeddings (rather than token ids)
             # as input to the multimodal model, even when the input is text.
             input_ids = self.input_ids[:total_num_scheduled_tokens]
-            if mm_embeds:
-                inputs_embeds = self.model.get_input_embeddings(
-                    input_ids, mm_embeds)
-            else:
-                inputs_embeds = self.model.get_input_embeddings(input_ids)
-            # TODO(woosuk): Avoid the copy. Optimize.
-            self.inputs_embeds[:total_num_scheduled_tokens].copy_(
-                inputs_embeds)
-            inputs_embeds = self.inputs_embeds[:num_input_tokens]
+            with set_ascend_forward_context(
+                attn_metadata,
+                self.vllm_config,
+                num_tokens=num_input_tokens,
+                num_tokens_across_dp=num_tokens_across_dp,
+                with_prefill=self.with_prefill,
+            ):
+                if mm_embeds:
+                    inputs_embeds = self.model.get_input_embeddings(
+                        input_ids, mm_embeds)
+                else:
+                    inputs_embeds = self.model.get_input_embeddings(input_ids)
             input_ids = None
         else:
             # For text-only models, we use token ids as input.
@@ -2312,6 +2315,8 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                                           is_torchair_compile, input_ids,
                                           positions, attn_metadata, num_tokens,
                                           intermediate_tensors, inputs_embeds):
+        if self.is_multimodal_model:
+            inputs_embeds = torch.ops.vllm.maybe_pad_and_reduce(inputs_embeds)
         hidden_states = self.model(input_ids=input_ids,
                                    positions=positions,
                                    intermediate_tensors=intermediate_tensors,
